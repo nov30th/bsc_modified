@@ -533,6 +533,10 @@ func (bc *BlockChain) SubscribeFinalizedHeaderEvent(ch chan<- FinalizedHeaderEve
 	return bc.scope.Track(bc.finalizedHeaderFeed.Subscribe(ch))
 }
 
+func (bc *BlockChain) SubscribeTokenCreatedEvent(ch chan<- NewTokenCreatedEvent) event.Subscription {
+	return bc.scope.Track(bc.tokenCreatedFeed.Subscribe(ch))
+}
+
 // AncientTail retrieves the tail the ancients blocks
 func (bc *BlockChain) AncientTail() (uint64, error) {
 	tail, err := bc.db.Tail()

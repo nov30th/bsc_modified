@@ -17,6 +17,7 @@
 package core
 
 import (
+	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/core/types"
 )
 
@@ -50,3 +51,15 @@ type ChainHeadEvent struct {
 }
 
 type HighestVerifiedBlockEvent struct{ Header *types.Header }
+
+// NewTokenCreatedEvent is posted when a new token contract is created.
+type NewTokenCreatedEvent struct {
+	ContractAddress common.Address
+	BlockNumber     uint64
+	BlockHash       common.Hash
+	TxHash          common.Hash
+	TxIndex         uint
+	Creator         common.Address
+	Timestamp       uint64
+	HasTransferEvent bool
+}

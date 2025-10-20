@@ -48,6 +48,7 @@ import (
 	"github.com/ethereum/go-ethereum/core/vote"
 	"github.com/ethereum/go-ethereum/eth/downloader"
 	"github.com/ethereum/go-ethereum/eth/ethconfig"
+	"github.com/ethereum/go-ethereum/eth/tokenmonitor"
 	"github.com/ethereum/go-ethereum/eth/filters"
 	"github.com/ethereum/go-ethereum/eth/gasprice"
 	"github.com/ethereum/go-ethereum/eth/protocols/bsc"
@@ -129,6 +130,8 @@ type Ethereum struct {
 	netRPCService *ethapi.NetAPI
 
 	p2pServer *p2p.Server
+
+	tokenMonitor *tokenmonitor.TokenMonitor // Token creation monitor
 
 	lock sync.RWMutex // Protects the variadic fields (e.g. gas price and etherbase)
 
@@ -778,6 +781,13 @@ func (s *Ethereum) Start() error {
 	// Start the networking layer
 	s.handler.Start(s.p2pServer.MaxPeers, s.p2pServer.MaxPeersPerIP)
 
+	// Start token monitor if enabled
+	if s.config.EnableTokenMonitor {
+		if err := s.startTokenMonitor(); err != nil {
+			log.Error("Failed to start token monitor", "err", err)
+		}
+	}
+
 	go s.reportRecentBlocksLoop()
 	return nil
 }
@@ -832,6 +842,11 @@ func (s *Ethereum) Stop() error {
 	// Stop all the peer-related stuff first.
 	s.discmix.Close()
 	s.handler.Stop()
+
+	// Stop token monitor if running
+	if s.tokenMonitor != nil {
+		s.tokenMonitor.Stop()
+	}
 
 	// Then stop everything else.
 	s.bloomIndexer.Close()
@@ -930,4 +945,31 @@ func validTimeMetric(startMs, endMs int64) bool {
 		return false
 	}
 	return endMs-startMs <= MaxBlockHandleDelayMs
+}
+
+// startTokenMonitor initializes and starts the token monitor
+func (s *Ethereum) startTokenMonitor() error {
+	// Default ZMQ endpoint
+	endpoint := "tcp://*:5555"
+	if s.config.TokenMonitorZMQEndpoint != "" {
+		endpoint = s.config.TokenMonitorZMQEndpoint
+	}
+
+	// Create ZMQ publisher
+	publisher, err := tokenmonitor.NewZMQPublisher(endpoint)
+	if err != nil {
+		return fmt.Errorf("failed to create ZMQ publisher: %w", err)
+	}
+
+	// Create token monitor
+	s.tokenMonitor = tokenmonitor.NewTokenMonitor(s.blockchain, publisher)
+
+	// Start monitoring
+	if err := s.tokenMonitor.Start(); err != nil {
+		publisher.Close()
+		return fmt.Errorf("failed to start token monitor: %w", err)
+	}
+
+	log.Info("Token monitor started successfully", "endpoint", endpoint)
+	return nil
 }

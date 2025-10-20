@@ -202,6 +202,10 @@ type Config struct {
 
 	// blob setting
 	BlobExtraReserve uint64
+
+	// Token Monitor settings
+	EnableTokenMonitor     bool   // Enable token creation monitoring
+	TokenMonitorZMQEndpoint string // ZMQ endpoint for publishing token events (default: tcp://*:5555)
 }
 
 // CreateConsensusEngine creates a consensus engine for the given chain config.

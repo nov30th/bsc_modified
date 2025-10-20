@@ -285,6 +285,7 @@ type BlockChain struct {
 	blockProcFeed            event.Feed
 	finalizedHeaderFeed      event.Feed
 	highestVerifiedBlockFeed event.Feed
+	tokenCreatedFeed         event.Feed // Feed for new token creation events
 	scope                    event.SubscriptionScope
 	genesisBlock             *types.Block
 
@@ -1728,6 +1729,9 @@ func (bc *BlockChain) writeBlockWithState(block *types.Block, receipts []*types.
 	// Make sure no inconsistent state is leaked during insertion
 	externTd := new(big.Int).Add(block.Difficulty(), ptd)
 
+	// Check for new token contracts and send events
+	bc.checkAndEmitTokenEvents(block, receipts)
+
 	// Irrelevant of the canonical status, write the block itself to the database.
 	//
 	// Note all the components of block(td, hash->number map, header, body, receipts)
@@ -3107,4 +3111,51 @@ func (bc *BlockChain) PruneBlockHistory(blockHistory uint64) error {
 	}
 	log.Info("Prune block history successful", "oldtail", old, "tail", pruneHeight, "best", bestHeight, "history", blockHistory)
 	return nil
+}
+
+// checkAndEmitTokenEvents checks receipts for new token contracts and emits events
+func (bc *BlockChain) checkAndEmitTokenEvents(block *types.Block, receipts []*types.Receipt) {
+	// Transfer event signature: keccak256("Transfer(address,address,uint256)")
+	transferSig := common.HexToHash("0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef")
+
+	signer := types.MakeSigner(bc.chainConfig, block.Number(), block.Time())
+
+	for i, receipt := range receipts {
+		// Check if this is a contract creation
+		if receipt.ContractAddress == (common.Address{}) {
+			continue
+		}
+
+		// Check if any logs contain Transfer event
+		hasTransferEvent := false
+		for _, log := range receipt.Logs {
+			if log.Address == receipt.ContractAddress && len(log.Topics) > 0 && log.Topics[0] == transferSig {
+				hasTransferEvent = true
+				break
+			}
+		}
+
+		// Only emit event if contract has Transfer event (likely a token)
+		if hasTransferEvent {
+			tx := block.Transactions()[i]
+			from, err := types.Sender(signer, tx)
+			if err != nil {
+				continue
+			}
+
+			event := NewTokenCreatedEvent{
+				ContractAddress: receipt.ContractAddress,
+				BlockNumber:     block.NumberU64(),
+				BlockHash:       block.Hash(),
+				TxHash:          tx.Hash(),
+				TxIndex:         uint(i),
+				Creator:         from,
+				Timestamp:       block.Time(),
+				HasTransferEvent: true,
+			}
+
+			// Send event asynchronously to avoid blocking
+			go bc.tokenCreatedFeed.Send(event)
+		}
+	}
 }
