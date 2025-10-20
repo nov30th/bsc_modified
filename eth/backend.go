@@ -782,10 +782,16 @@ func (s *Ethereum) Start() error {
 	s.handler.Start(s.p2pServer.MaxPeers, s.p2pServer.MaxPeersPerIP)
 
 	// Start token monitor if enabled
+	log.Info("Token monitor configuration", "enabled", s.config.EnableTokenMonitor, "endpoint", s.config.TokenMonitorZMQEndpoint)
 	if s.config.EnableTokenMonitor {
+		log.Info("Starting token monitor...")
 		if err := s.startTokenMonitor(); err != nil {
 			log.Error("Failed to start token monitor", "err", err)
+		} else {
+			log.Info("Token monitor initialization completed")
 		}
+	} else {
+		log.Info("Token monitor is disabled")
 	}
 
 	go s.reportRecentBlocksLoop()
