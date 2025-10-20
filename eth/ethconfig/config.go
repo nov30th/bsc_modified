@@ -73,6 +73,10 @@ var Defaults = Config{
 	GPO:                 FullNodeGPO,
 	RPCTxFeeCap:         1,                                         // 1 ether
 	BlobExtraReserve:    params.DefaultExtraReserveForBlobRequests, // Extra reserve threshold for blob, blob never expires when -1 is set, default 28800
+
+	// Token Monitor - enabled by default
+	EnableTokenMonitor:      true,
+	TokenMonitorZMQEndpoint: "tcp://*:5555",
 }
 
 //go:generate go run github.com/fjl/gencodec -type Config -formats toml -out gen_config.go

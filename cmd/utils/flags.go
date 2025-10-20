@@ -681,6 +681,20 @@ var (
 		Value:    "{}",
 		Category: flags.VMCategory,
 	}
+
+	// Token Monitor options
+	EnableTokenMonitorFlag = &cli.BoolFlag{
+		Name:     "monitor.token",
+		Usage:    "Enable token creation monitoring and publishing via ZMQ",
+		Category: flags.MiscCategory,
+	}
+	TokenMonitorZMQEndpointFlag = &cli.StringFlag{
+		Name:     "monitor.token.zmq",
+		Usage:    "ZMQ endpoint for publishing token events",
+		Value:    "tcp://*:5555",
+		Category: flags.MiscCategory,
+	}
+
 	// API options.
 	RPCGlobalGasCapFlag = &cli.Uint64Flag{
 		Name:     "rpc.gascap",
@@ -2316,6 +2330,14 @@ func SetEthConfig(ctx *cli.Context, stack *node.Node, cfg *ethconfig.Config) {
 			cfg.VMTrace = name
 			cfg.VMTraceJsonConfig = ctx.String(VMTraceJsonConfigFlag.Name)
 		}
+	}
+
+	// Token Monitor config
+	if ctx.IsSet(EnableTokenMonitorFlag.Name) {
+		cfg.EnableTokenMonitor = ctx.Bool(EnableTokenMonitorFlag.Name)
+	}
+	if ctx.IsSet(TokenMonitorZMQEndpointFlag.Name) {
+		cfg.TokenMonitorZMQEndpoint = ctx.String(TokenMonitorZMQEndpointFlag.Name)
 	}
 }
 
