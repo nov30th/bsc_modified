@@ -511,6 +511,104 @@ brew install zmq pkg-config
 ./build/bin/geth --config config.toml --monitor.token.zmq="tcp://*:6666"
 ```
 
+### 优雅关闭 BSC 节点（重要！）
+
+**问题**：直接 `kill -9` 或强制关闭可能导致：
+- 状态未完全落盘
+- 重启后需要重新同步最后数小时的数据
+- 数据库可能损坏
+
+**正确方法**：
+
+#### 方法 1：使用 SIGTERM 信号（推荐）
+```bash
+# 找到 geth 进程 ID
+ps aux | grep geth
+
+# 发送 TERM 信号（优雅关闭）
+kill -TERM <PID>
+
+# 或者使用 systemctl（如果是 systemd 服务）
+systemctl stop bsc
+```
+
+#### 方法 2：使用 attach 命令
+```bash
+# 连接到 geth console
+geth attach /path/to/geth.ipc
+
+# 或者通过 HTTP
+geth attach http://localhost:8545
+
+# 在 console 中执行
+> exit
+
+# 这会触发优雅关闭
+```
+
+#### 方法 3：在前台运行时按 Ctrl+C
+```bash
+# 前台运行 geth
+./build/bin/geth --config config.toml
+
+# 按一次 Ctrl+C 触发优雅关闭
+# 等待关闭完成（不要按第二次！）
+```
+
+**观察日志确认完全关闭**：
+```bash
+tail -f /path/to/geth.log
+
+# 应该看到以下关闭序列：
+# INFO Stopping Token monitor...
+# INFO Token monitor stopped detected=X verified=Y published=Z
+# INFO Blockchain stopped
+# INFO Database closed
+# INFO HTTP server stopped
+# INFO IPC endpoint closed
+```
+
+**关闭流程说明**：
+1. 接收关闭信号（SIGTERM 或 SIGINT）
+2. 停止接受新连接和交易
+3. 完成当前区块处理
+4. Token Monitor 停止（发送最后的统计信息）
+5. 将所有 dirty state 刷新到磁盘
+6. 关闭数据库连接
+7. 进程退出
+
+**等待时间**：
+- 正常情况：5-30 秒
+- 高负载/大量 dirty state：可能需要 1-2 分钟
+- **切勿使用 kill -9**，除非等待超过 5 分钟无响应
+
+**systemd 服务配置**（推荐）：
+```ini
+[Unit]
+Description=BSC Node with Token Monitor
+After=network.target
+
+[Service]
+Type=simple
+User=bsc
+Group=bsc
+ExecStart=/path/to/geth --config /path/to/config.toml
+KillMode=mixed
+KillSignal=SIGTERM
+TimeoutStopSec=300
+Restart=on-failure
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target
+```
+
+**为什么会重新同步最后几小时数据？**
+- Geth 使用 WAL (Write-Ahead Logging) 机制
+- 强制关闭会丢失内存中未提交的状态
+- 重启时从最后一个完整 checkpoint 恢复
+- 正常关闭会先 flush 所有数据到磁盘
+
 ### 查看启动日志
 
 启动成功后，应该能看到：
@@ -658,6 +756,13 @@ netstat -ntlp | grep 5555
 - 每 100 次失败才记录一次 Debug 日志
 - 每 60 秒在 Info 日志中显示最后 5 个失败案例
 - 避免日志洪水影响性能
+
+**验证延迟机制**：
+为了解决新区块中的合约验证问题，实现了 500ms 延迟：
+1. 事件发送时，状态可能还未完全提交到数据库
+2. Worker 在验证前等待 500ms，确保状态已落盘
+3. 这解决了"contract has no code"的错误
+4. 延迟对实时性影响很小（新代币通知延迟 < 1 秒）
 
 **如果需要监控历史代币**：
 需要使用 Archive 节点（保留完整历史状态），但会：

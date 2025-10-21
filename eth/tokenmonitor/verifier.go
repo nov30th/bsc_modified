@@ -40,10 +40,13 @@ func (v *Verifier) VerifyAndExtract(token *PendingToken) (*TokenMetadata, error)
 		return nil, fmt.Errorf("failed to get state: %w", err)
 	}
 
-	// Check if contract still exists at current state
-	// This filters out historical tokens during sync
-	if !statedb.Exist(token.Address) {
-		return nil, fmt.Errorf("contract does not exist in current state (likely historical during sync)")
+	// Check if contract has code at current state
+	// This filters out:
+	// 1. Historical tokens during sync (contract may have been destroyed)
+	// 2. EOA addresses mistakenly detected as contracts
+	code := statedb.GetCode(token.Address)
+	if len(code) == 0 {
+		return nil, fmt.Errorf("contract has no code in current state (selfDestructed or EOA)")
 	}
 
 	// 1. Verify core functions

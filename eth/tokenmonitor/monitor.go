@@ -26,6 +26,9 @@ const (
 	PublishQueueSize   = 100
 	PublishBatchSize   = 10
 	PublishBatchTimeout = 1 * time.Second
+
+	// Verification delay - wait for state to be committed
+	VerificationDelay = 500 * time.Millisecond
 )
 
 // TokenMonitor monitors blockchain for new token contracts
@@ -176,6 +179,9 @@ func (m *TokenMonitor) verifyWorker(id int) {
 	for {
 		select {
 		case token := <-m.verifyQueue:
+			// Wait for state to be committed (important for newly created contracts)
+			time.Sleep(VerificationDelay)
+
 			// Verify and extract metadata
 			metadata, err := m.verifier.VerifyAndExtract(token)
 			if err != nil {
