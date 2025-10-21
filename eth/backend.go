@@ -48,6 +48,7 @@ import (
 	"github.com/ethereum/go-ethereum/core/vote"
 	"github.com/ethereum/go-ethereum/eth/downloader"
 	"github.com/ethereum/go-ethereum/eth/ethconfig"
+	"github.com/ethereum/go-ethereum/eth/pairmonitor"
 	"github.com/ethereum/go-ethereum/eth/tokenmonitor"
 	"github.com/ethereum/go-ethereum/eth/filters"
 	"github.com/ethereum/go-ethereum/eth/gasprice"
@@ -132,6 +133,7 @@ type Ethereum struct {
 	p2pServer *p2p.Server
 
 	tokenMonitor *tokenmonitor.TokenMonitor // Token creation monitor
+	pairMonitor  *pairmonitor.PairMonitor   // Pair creation monitor
 
 	lock sync.RWMutex // Protects the variadic fields (e.g. gas price and etherbase)
 
@@ -794,6 +796,19 @@ func (s *Ethereum) Start() error {
 		log.Info("Token monitor is disabled")
 	}
 
+	// Start pair monitor if enabled
+	log.Info("Pair monitor configuration", "enabled", s.config.EnablePairMonitor, "endpoint", s.config.PairMonitorZMQEndpoint)
+	if s.config.EnablePairMonitor {
+		log.Info("Starting pair monitor...")
+		if err := s.startPairMonitor(); err != nil {
+			log.Error("Failed to start pair monitor", "err", err)
+		} else {
+			log.Info("Pair monitor initialization completed")
+		}
+	} else {
+		log.Info("Pair monitor is disabled")
+	}
+
 	go s.reportRecentBlocksLoop()
 	return nil
 }
@@ -852,6 +867,11 @@ func (s *Ethereum) Stop() error {
 	// Stop token monitor if running
 	if s.tokenMonitor != nil {
 		s.tokenMonitor.Stop()
+	}
+
+	// Stop pair monitor if running
+	if s.pairMonitor != nil {
+		s.pairMonitor.Stop()
 	}
 
 	// Then stop everything else.
@@ -977,5 +997,32 @@ func (s *Ethereum) startTokenMonitor() error {
 	}
 
 	log.Info("Token monitor started successfully", "endpoint", endpoint)
+	return nil
+}
+
+// startPairMonitor initializes and starts the pair monitor
+func (s *Ethereum) startPairMonitor() error {
+	// Default ZMQ endpoint (different port from token monitor)
+	endpoint := "tcp://*:5556"
+	if s.config.PairMonitorZMQEndpoint != "" {
+		endpoint = s.config.PairMonitorZMQEndpoint
+	}
+
+	// Reuse ZMQ publisher from tokenmonitor package
+	publisher, err := tokenmonitor.NewZMQPublisher(endpoint)
+	if err != nil {
+		return fmt.Errorf("failed to create ZMQ publisher for pairs: %w", err)
+	}
+
+	// Create pair monitor
+	s.pairMonitor = pairmonitor.NewPairMonitor(s.blockchain, publisher)
+
+	// Start monitoring
+	if err := s.pairMonitor.Start(); err != nil {
+		publisher.Close()
+		return fmt.Errorf("failed to start pair monitor: %w", err)
+	}
+
+	log.Info("Pair monitor started successfully", "endpoint", endpoint)
 	return nil
 }

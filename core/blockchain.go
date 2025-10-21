@@ -286,6 +286,7 @@ type BlockChain struct {
 	finalizedHeaderFeed      event.Feed
 	highestVerifiedBlockFeed event.Feed
 	tokenCreatedFeed         event.Feed // Feed for new token creation events
+	pairCreatedFeed          event.Feed // Feed for new pair creation events
 	scope                    event.SubscriptionScope
 	genesisBlock             *types.Block
 
@@ -1732,6 +1733,9 @@ func (bc *BlockChain) writeBlockWithState(block *types.Block, receipts []*types.
 	// Check for new token contracts and send events
 	bc.checkAndEmitTokenEvents(block, receipts)
 
+	// Check for new PancakeSwap pairs and send events
+	bc.checkAndEmitPairEvents(block, receipts)
+
 	// Irrelevant of the canonical status, write the block itself to the database.
 	//
 	// Note all the components of block(td, hash->number map, header, body, receipts)
@@ -3156,6 +3160,65 @@ func (bc *BlockChain) checkAndEmitTokenEvents(block *types.Block, receipts []*ty
 
 			// Send event asynchronously to avoid blocking
 			go bc.tokenCreatedFeed.Send(event)
+		}
+	}
+}
+
+// checkAndEmitPairEvents checks receipts for new PancakeSwap pair contracts and emits events
+func (bc *BlockChain) checkAndEmitPairEvents(block *types.Block, receipts []*types.Receipt) {
+	// PairCreated event signature: keccak256("PairCreated(address,address,address,uint256)")
+	pairCreatedSig := common.HexToHash("0x0d3648bd0f6ba80134a33ba9275ac585d9d315f0ad8355cddefde31afa28d0e9")
+
+	// PancakeSwap V2 Factory
+	factoryAddress := common.HexToAddress("0xcA143Ce32Fe78f1f7019d7d551a6402fC5350c73")
+
+	signer := types.MakeSigner(bc.chainConfig, block.Number(), block.Time())
+
+	for i, receipt := range receipts {
+		// Check logs for PairCreated event
+		for _, log := range receipt.Logs {
+			// Must be from PancakeSwap Factory and have PairCreated signature
+			if log.Address != factoryAddress {
+				continue
+			}
+			if len(log.Topics) == 0 || log.Topics[0] != pairCreatedSig {
+				continue
+			}
+
+			// PairCreated event has 3 indexed topics: event signature, token0, token1
+			// And data contains: pair address and pair index
+			if len(log.Topics) < 3 || len(log.Data) < 64 {
+				continue
+			}
+
+			// Extract event parameters
+			token0 := common.BytesToAddress(log.Topics[1].Bytes())
+			token1 := common.BytesToAddress(log.Topics[2].Bytes())
+			pairAddress := common.BytesToAddress(log.Data[0:32])
+			pairIndex := new(big.Int).SetBytes(log.Data[32:64])
+
+			tx := block.Transactions()[i]
+			from, err := types.Sender(signer, tx)
+			if err != nil {
+				continue
+			}
+
+			event := NewPairCreatedEvent{
+				PairAddress:    pairAddress,
+				Token0:         token0,
+				Token1:         token1,
+				PairIndex:      pairIndex,
+				FactoryAddress: factoryAddress,
+				BlockNumber:    block.NumberU64(),
+				BlockHash:      block.Hash(),
+				TxHash:         tx.Hash(),
+				TxIndex:        uint(i),
+				Creator:        from,
+				Timestamp:      block.Time(),
+			}
+
+			// Send event asynchronously to avoid blocking
+			go bc.pairCreatedFeed.Send(event)
 		}
 	}
 }

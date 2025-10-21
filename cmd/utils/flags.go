@@ -694,6 +694,17 @@ var (
 		Value:    "tcp://*:5555",
 		Category: flags.MiscCategory,
 	}
+	EnablePairMonitorFlag = &cli.BoolFlag{
+		Name:     "monitor.pair",
+		Usage:    "Enable PancakeSwap pair creation monitoring and publishing via ZMQ",
+		Category: flags.MiscCategory,
+	}
+	PairMonitorZMQEndpointFlag = &cli.StringFlag{
+		Name:     "monitor.pair.zmq",
+		Usage:    "ZMQ endpoint for publishing pair events",
+		Value:    "tcp://*:5556",
+		Category: flags.MiscCategory,
+	}
 
 	// API options.
 	RPCGlobalGasCapFlag = &cli.Uint64Flag{
@@ -2338,6 +2349,14 @@ func SetEthConfig(ctx *cli.Context, stack *node.Node, cfg *ethconfig.Config) {
 	}
 	if ctx.IsSet(TokenMonitorZMQEndpointFlag.Name) {
 		cfg.TokenMonitorZMQEndpoint = ctx.String(TokenMonitorZMQEndpointFlag.Name)
+	}
+
+	// Pair Monitor config
+	if ctx.IsSet(EnablePairMonitorFlag.Name) {
+		cfg.EnablePairMonitor = ctx.Bool(EnablePairMonitorFlag.Name)
+	}
+	if ctx.IsSet(PairMonitorZMQEndpointFlag.Name) {
+		cfg.PairMonitorZMQEndpoint = ctx.String(PairMonitorZMQEndpointFlag.Name)
 	}
 }
 

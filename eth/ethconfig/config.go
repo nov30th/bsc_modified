@@ -77,6 +77,10 @@ var Defaults = Config{
 	// Token Monitor - enabled by default
 	EnableTokenMonitor:      true,
 	TokenMonitorZMQEndpoint: "tcp://*:5555",
+
+	// Pair Monitor - enabled by default
+	EnablePairMonitor:      true,
+	PairMonitorZMQEndpoint: "tcp://*:5556",
 }
 
 //go:generate go run github.com/fjl/gencodec -type Config -formats toml -out gen_config.go
@@ -210,6 +214,10 @@ type Config struct {
 	// Token Monitor settings
 	EnableTokenMonitor     bool   // Enable token creation monitoring
 	TokenMonitorZMQEndpoint string // ZMQ endpoint for publishing token events (default: tcp://*:5555)
+
+	// Pair Monitor settings
+	EnablePairMonitor      bool   // Enable PancakeSwap pair creation monitoring
+	PairMonitorZMQEndpoint string // ZMQ endpoint for publishing pair events (default: tcp://*:5556)
 }
 
 // CreateConsensusEngine creates a consensus engine for the given chain config.

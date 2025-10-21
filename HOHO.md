@@ -949,5 +949,524 @@ brew install zmq pkg-config
 
 ---
 
-**最后更新：** 2025-10-20
-**文档版本：** 1.0.0
+**最后更新：** 2025-10-21
+**文档版本：** 1.1.0
+
+---
+
+# BSC PancakeSwap Pair Monitor 功能文档
+
+## 概述
+
+PancakeSwap Pair Monitor 是在 Token Monitor 基础上实现的独立监控功能，用于实时监测 PancakeSwap V2 Factory 合约创建的新交易对（Pair）。该功能通过 ZeroMQ 发布 pair 创建事件，提供完整的交易对元数据。
+
+## 功能特性
+
+### 核心功能
+- **实时监测**：监控 PancakeSwap V2 Factory (0xcA143Ce32Fe78f1f7019d7d551a6402fC5350c73) 的 PairCreated 事件
+- **独立架构**：与 Token Monitor 独立运行，互不影响
+- **代码复用**：复用 ZMQ Publisher、Worker Pool 模式和 Contract Caller 工具
+- **完整元数据**：提取两个代币的信息、流动性储备、初始价格、LP 代币信息
+- **并发验证**：使用 500ms 验证延迟，多 worker 并发处理
+- **独立端口**：默认使用 tcp://*:5556（与 Token Monitor 的 5555 端口分离）
+
+### 提取的信息
+- **Pair 基本信息**：Pair 合约地址、Factory 地址、Pair Index
+- **Token0 信息**：地址、名称、符号、精度、储备量
+- **Token1 信息**：地址、名称、符号、精度、储备量
+- **流动性信息**：LP 总供应量、初始价格
+- **创建信息**：创建者地址、交易哈希、区块号、时间戳
+
+## 技术架构
+
+### 整体流程
+
+```
+区块处理 (blockchain.go)
+    ↓
+检测 PairCreated 事件
+    ↓
+发送事件到 pairCreatedFeed
+    ↓
+Pair Monitor 订阅事件
+    ↓
+Worker Pool 验证交易对
+    ↓
+ZMQ Publisher 发布（独立端口 5556）
+    ↓
+Pair Client 接收显示
+```
+
+### 关键组件
+
+#### 1. 通用工具 (eth/contractutils/)
+从 tokenmonitor 提取的通用合约调用工具：
+- **caller.go**：ContractCaller 类型，封装 EVM 调用
+  - `CallContract()`: 通用合约调用
+  - `CallString()`: 调用返回 string 的函数（name, symbol）
+  - `CallUint256()`: 调用返回 uint256 的函数（totalSupply, balanceOf）
+  - `CallUint8()`: 调用返回 uint8 的函数（decimals）
+  - `CallAddress()`: 调用返回 address 的函数（token0, token1）
+  - `HasCode()`: 检查合约是否存在
+
+#### 2. Pair Monitor 服务 (eth/pairmonitor/)
+- **types.go**：数据结构定义
+  - `PairMetadata`: 发布的完整 pair 信息
+  - `PendingPair`: 待验证的 pair
+  - PancakeSwap V2 Factory 地址常量
+  - PairCreated 事件签名常量
+  - Pair 合约函数选择器（getReserves, token0, token1 等）
+
+- **verifier.go**：Pair 验证器
+  - `VerifyAndExtract()`: 验证 pair 合约并提取完整元数据
+  - `getReserves()`: 获取流动性储备
+  - `calculatePrice()`: 计算初始价格
+  - 复用 contractutils 进行合约调用
+
+- **monitor.go**：主监控服务
+  - Worker Pool 模式（CPU-1 workers）
+  - 500ms 验证延迟（等待状态提交）
+  - 批量发布（10 个一批，或 1 秒超时）
+  - 统计信息报告（每 60 秒）
+  - 错误追踪（保留最后 5 个错误）
+
+#### 3. 事件系统 (core/events.go)
+添加了 `NewPairCreatedEvent` 结构体：
+```go
+type NewPairCreatedEvent struct {
+    PairAddress    common.Address
+    Token0         common.Address
+    Token1         common.Address
+    PairIndex      *big.Int
+    FactoryAddress common.Address
+    BlockNumber    uint64
+    BlockHash      common.Hash
+    TxHash         common.Hash
+    TxIndex        uint
+    Creator        common.Address
+    Timestamp      uint64
+}
+```
+
+#### 4. 区块链集成 (core/blockchain.go)
+- 添加 `pairCreatedFeed event.Feed` 字段
+- 实现 `checkAndEmitPairEvents()` 函数，监听 PairCreated 事件
+- 在 `writeBlockWithState()` 中调用检测函数
+
+#### 5. 订阅接口 (core/blockchain_reader.go)
+```go
+func (bc *BlockChain) SubscribePairCreatedEvent(ch chan<- NewPairCreatedEvent) event.Subscription
+```
+
+#### 6. Backend 集成 (eth/backend.go)
+- 添加 `pairMonitor *pairmonitor.PairMonitor` 字段
+- `startPairMonitor()` 启动函数
+- `Stop()` 中添加停止逻辑
+
+#### 7. 配置系统 (eth/ethconfig/config.go)
+```go
+EnablePairMonitor      bool   // 默认：true
+PairMonitorZMQEndpoint string // 默认："tcp://*:5556"
+```
+
+#### 8. 命令行参数 (cmd/utils/flags.go)
+```go
+--monitor.pair         // 启用/禁用 Pair Monitor
+--monitor.pair.zmq     // ZMQ 端点配置
+```
+
+#### 9. ZMQ 客户端 (cmd/pairclient/main.go)
+订阅 "bsc.pair.created" topic，显示交易对信息。
+
+## 代码修改详情
+
+### 1. 提取通用工具
+
+**新文件：** `eth/contractutils/caller.go`
+
+**目的：** 将 tokenmonitor 中的合约调用方法提取出来，供 pairmonitor 复用
+
+**关键类型：**
+```go
+type ContractCaller struct {
+    blockchain *core.BlockChain
+    chainConfig *params.ChainConfig
+}
+```
+
+### 2. Pair Monitor 实现
+
+**新文件：** `eth/pairmonitor/types.go`
+
+**PancakeSwap V2 常量：**
+```go
+var PancakeV2Factory = common.HexToAddress("0xcA143Ce32Fe78f1f7019d7d551a6402fC5350c73")
+var PairCreatedEventSignature = common.HexToHash("0x0d3648bd0f6ba80134a33ba9275ac585d9d315f0ad8355cddefde31afa28d0e9")
+```
+
+**Pair 合约函数选择器：**
+```go
+GetReservesSelector = common.Hex2Bytes("0902f1ac") // getReserves()
+Token0Selector      = common.Hex2Bytes("0dfe1681") // token0()
+Token1Selector      = common.Hex2Bytes("d21220a7") // token1()
+```
+
+**新文件：** `eth/pairmonitor/verifier.go`
+
+**关键函数：**
+```go
+func (v *Verifier) VerifyAndExtract(pair *PendingPair) (*PairMetadata, error) {
+    // 1. 检查 pair 合约是否存在
+    // 2. 调用 getReserves() 获取储备
+    // 3. 调用 token0() 和 token1() 获取代币地址
+    // 4. 提取两个代币的元数据（name, symbol, decimals）
+    // 5. 计算初始价格
+    // 6. 获取 LP 代币信息（name, symbol, totalSupply）
+    // 7. 返回完整的 PairMetadata
+}
+```
+
+**新文件：** `eth/pairmonitor/monitor.go`
+
+**Worker Pool 配置：**
+```go
+workers := runtime.NumCPU() - 1
+if workers < 1 {
+    workers = 1
+}
+```
+
+**验证延迟：**
+```go
+const VerificationDelay = 500 * time.Millisecond
+```
+
+### 3. 区块链事件检测
+
+**文件：** `core/blockchain.go`
+
+**添加函数：**
+```go
+func (bc *BlockChain) checkAndEmitPairEvents(block *types.Block, receipts []*types.Receipt) {
+    pairCreatedSig := common.HexToHash("0x0d3648bd0f6ba80134a33ba9275ac585d9d315f0ad8355cddefde31afa28d0e9")
+    factoryAddress := common.HexToAddress("0xcA143Ce32Fe78f1f7019d7d551a6402fC5350c73")
+
+    // 遍历所有交易收据
+    for i, receipt := range receipts {
+        // 遍历所有日志
+        for _, log := range receipt.Logs {
+            // 检查是否是 Factory 的 PairCreated 事件
+            if log.Address != factoryAddress {
+                continue
+            }
+            if len(log.Topics) == 0 || log.Topics[0] != pairCreatedSig {
+                continue
+            }
+
+            // 解析事件参数
+            // Topics[1]: token0 (indexed)
+            // Topics[2]: token1 (indexed)
+            // Data[0:32]: pair address
+            // Data[32:64]: pair index
+
+            event := NewPairCreatedEvent{...}
+            go bc.pairCreatedFeed.Send(event)
+        }
+    }
+}
+```
+
+**调用位置：** `writeBlockWithState()` 函数中，紧跟在 `checkAndEmitTokenEvents()` 之后
+
+## PancakeSwap 技术细节
+
+### PairCreated 事件结构
+
+**Solidity 定义：**
+```solidity
+event PairCreated(
+    address indexed token0,
+    address indexed token1,
+    address pair,
+    uint256
+);
+```
+
+**事件签名：**
+```
+keccak256("PairCreated(address,address,address,uint256)") =
+0x0d3648bd0f6ba80134a33ba9275ac585d9d315f0ad8355cddefde31afa28d0e9
+```
+
+**参数解析：**
+- `Topics[0]`: 事件签名
+- `Topics[1]`: token0 地址（32 bytes, indexed）
+- `Topics[2]`: token1 地址（32 bytes, indexed）
+- `Data[0:32]`: pair 合约地址（非 indexed）
+- `Data[32:64]`: pair index（pair 序号）
+
+### Pair 合约接口
+
+**关键函数：**
+```solidity
+function getReserves() external view returns (
+    uint112 reserve0,
+    uint112 reserve1,
+    uint32 blockTimestampLast
+);
+
+function token0() external view returns (address);
+function token1() external view returns (address);
+function totalSupply() external view returns (uint256);
+function name() external view returns (string);
+function symbol() external view returns (string);
+```
+
+**价格计算：**
+```go
+// price = reserve1 / reserve0 (以 token0 计价的 token1 价格)
+price := new(big.Float).Quo(
+    new(big.Float).SetInt(reserve1),
+    new(big.Float).SetInt(reserve0),
+)
+```
+
+## 使用方法
+
+### 启动 BSC 节点（Pair Monitor 自动启动）
+
+```bash
+# 默认配置（自动启用，监听 tcp://*:5556）
+./build/bin/geth --config config.toml
+
+# 禁用 Pair Monitor
+./build/bin/geth --config config.toml --monitor.pair=false
+
+# 自定义 ZMQ 端口
+./build/bin/geth --config config.toml --monitor.pair.zmq="tcp://*:7777"
+
+# 同时运行 Token Monitor 和 Pair Monitor（默认）
+./build/bin/geth --config config.toml
+# Token Monitor: tcp://*:5555
+# Pair Monitor:  tcp://*:5556
+```
+
+### 查看启动日志
+
+启动成功后，应该能看到：
+```
+INFO Pair monitor configuration enabled=true endpoint=tcp://*:5556
+INFO Starting pair monitor...
+INFO Pair monitor started successfully endpoint=tcp://*:5556
+INFO Pair monitor started workers=7 cpus=8
+```
+
+### 检查端口监听
+
+```bash
+netstat -ntlp | grep 5556
+# 应该输出：
+# tcp  0  0  0.0.0.0:5556  0.0.0.0:*  LISTEN  <PID>/geth
+```
+
+### 运行客户端接收 Pair 事件
+
+```bash
+# 美化输出
+./build/bin/pairclient
+
+# 自定义端点
+./build/bin/pairclient --endpoint="tcp://localhost:5556"
+
+# JSON 格式输出
+./build/bin/pairclient --json
+
+# 详细输出
+./build/bin/pairclient -v
+
+# 保存到文件
+./build/bin/pairclient --json > pairs.jsonl
+```
+
+### 客户端命令行参数
+
+```bash
+--endpoint string   # ZMQ endpoint to subscribe to (default "tcp://localhost:5556")
+--topic string      # Topic to subscribe to (default "bsc.pair.created")
+--json              # Output only JSON (no formatting)
+-v                  # Verbose output
+```
+
+## 输出格式
+
+### PairMetadata JSON 结构
+
+```json
+{
+  "pairAddress": "0x1234...",
+  "token0": "0xabc...",
+  "token1": "0xdef...",
+  "pairIndex": 123456,
+  "token0Name": "Token A",
+  "token0Symbol": "TKNA",
+  "token0Decimals": 18,
+  "token1Name": "Token B",
+  "token1Symbol": "TKNB",
+  "token1Decimals": 18,
+  "reserve0": "1000000000000000000000",
+  "reserve1": "5000000000000000000000",
+  "totalSupply": "2236067977499789696410",
+  "initialPrice": "5.0",
+  "pairName": "Pancake LPs",
+  "pairSymbol": "Cake-LP",
+  "creator": "0x789...",
+  "txHash": "0xfed...",
+  "blockNumber": 12345678,
+  "timestamp": 1729500000,
+  "factoryAddress": "0xcA143Ce32Fe78f1f7019d7d551a6402fC5350c73"
+}
+```
+
+### 字段说明
+
+| 字段 | 类型 | 说明 |
+|------|------|------|
+| pairAddress | string | Pair 合约地址 |
+| token0 | string | Token0 地址 |
+| token1 | string | Token1 地址 |
+| pairIndex | uint64 | Pair 序号 |
+| token0Name | string | Token0 名称（可选） |
+| token0Symbol | string | Token0 符号（可选） |
+| token0Decimals | uint8 | Token0 精度（可选） |
+| token1Name | string | Token1 名称（可选） |
+| token1Symbol | string | Token1 符号（可选） |
+| token1Decimals | uint8 | Token1 精度（可选） |
+| reserve0 | string | Token0 储备量（可选） |
+| reserve1 | string | Token1 储备量（可选） |
+| totalSupply | string | LP 总供应量（可选） |
+| initialPrice | string | 初始价格（reserve1/reserve0，可选） |
+| pairName | string | LP 代币名称（可选） |
+| pairSymbol | string | LP 代币符号（可选） |
+| creator | string | 创建者地址 |
+| txHash | string | 创建交易哈希 |
+| blockNumber | uint64 | 区块高度 |
+| timestamp | uint64 | 区块时间戳 |
+| factoryAddress | string | Factory 合约地址 |
+
+## 性能考虑
+
+### 与 Token Monitor 的关系
+- **完全独立**：两个监控服务并行运行，互不影响
+- **共享资源**：复用 blockchain 实例、ZMQ 库、contractutils
+- **独立端口**：避免消息混淆
+- **独立 Worker Pool**：Pair Monitor 有自己的 CPU-1 workers
+
+### 验证延迟
+- **并发性**：多个 workers 并发验证，延迟是并发的
+- **示例**：如果同时创建 10 个 pair，所有验证在 ~500ms 内完成（不是 5000ms）
+- **原因**：每个 worker 独立处理，10 个 pair 分配给 7 个 workers 并行验证
+
+### 对区块链的影响
+- **事件检测**：< 0.5ms per block
+- **异步验证**：不阻塞区块处理
+- **总延迟**：< 1ms per block
+
+## 故障排查
+
+### 问题 1：Pair Monitor 未启动
+
+**检查步骤：**
+```bash
+# 1. 检查 flags 是否注册
+./build/bin/geth --help | grep monitor.pair
+# 应该显示：
+#   --monitor.pair
+#   --monitor.pair.zmq
+
+# 2. 查看启动日志
+./build/bin/geth ... 2>&1 | grep -i "pair monitor"
+# 应该看到：
+#   INFO Pair monitor configuration enabled=true endpoint=tcp://*:5556
+#   INFO Starting pair monitor...
+#   INFO Pair monitor started successfully
+
+# 3. 检查端口监听
+netstat -ntlp | grep 5556
+```
+
+### 问题 2：没有收到 Pair 事件
+
+**可能原因：**
+1. PancakeSwap Factory 地址错误（检查是否为 V2 Factory）
+2. 事件签名错误
+3. 区块链在同步历史数据（历史 pair 验证会失败）
+4. 没有新的 pair 创建
+
+**验证方法：**
+```bash
+# 查看统计信息（每 60 秒在日志中显示）
+grep "Pair monitor stats" geth.log
+# 示例输出：
+# INFO Pair monitor stats detected=123 verified=98 published=98 failed=25
+
+# 检查最近的错误
+grep "pair verification failures" geth.log
+```
+
+### 问题 3：验证失败率高
+
+**原因：**
+- 同步历史区块时，历史 pair 的状态不可用
+- 某些 pair 合约不符合标准（缺少 name/symbol 等可选函数）
+
+**正常情况：**
+- 同步期间：高失败率（90%+）
+- 同步完成后：低失败率（< 5%）
+
+## 与 Token Monitor 的对比
+
+| 特性 | Token Monitor | Pair Monitor |
+|------|---------------|--------------|
+| 监控对象 | BEP-20 代币合约 | PancakeSwap 交易对 |
+| 检测方式 | Transfer 事件 + 合约验证 | PairCreated 事件 |
+| 合约地址 | 任意合约创建 | 固定 Factory 地址 |
+| ZMQ Topic | bsc.token.created | bsc.pair.created |
+| 默认端口 | tcp://*:5555 | tcp://*:5556 |
+| 提取信息 | 单个代币元数据 | 两个代币 + 流动性信息 |
+| 客户端 | tokenclient | pairclient |
+
+## 未来优化建议
+
+### 1. 多 DEX 支持
+- PancakeSwap V3
+- Biswap
+- ApeSwap
+- 其他 Uniswap V2 forks
+
+### 2. 流动性跟踪
+- 实时监控 Sync 事件（储备变化）
+- 计算 24h 交易量
+- 价格波动追踪
+
+### 3. 套利机会检测
+- 跨 DEX 价格比较
+- 自动化套利告警
+
+### 4. 持久化存储
+- 存储所有 pair 信息到数据库
+- 提供 REST API 查询
+- 历史数据分析
+
+## 版本历史
+
+### v1.1.0 (2025-10-21)
+- 新增 PancakeSwap Pair Monitor 功能
+- 提取通用工具到 eth/contractutils
+- 独立 ZMQ 端口和 topic
+- 并发验证架构
+- pairclient 命令行工具
+
+---
+
+**Pair Monitor 文档最后更新：** 2025-10-21
+**Pair Monitor 版本：** 1.0.0

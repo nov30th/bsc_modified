@@ -170,6 +170,8 @@ var (
 		utils.VMTraceJsonConfigFlag,
 		utils.EnableTokenMonitorFlag,
 		utils.TokenMonitorZMQEndpointFlag,
+		utils.EnablePairMonitorFlag,
+		utils.PairMonitorZMQEndpointFlag,
 		utils.NetworkIdFlag,
 		utils.EthStatsURLFlag,
 		utils.NoCompactionFlag,

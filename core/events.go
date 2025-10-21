@@ -17,6 +17,8 @@
 package core
 
 import (
+	"math/big"
+
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/core/types"
 )
@@ -54,12 +56,27 @@ type HighestVerifiedBlockEvent struct{ Header *types.Header }
 
 // NewTokenCreatedEvent is posted when a new token contract is created.
 type NewTokenCreatedEvent struct {
-	ContractAddress common.Address
-	BlockNumber     uint64
-	BlockHash       common.Hash
-	TxHash          common.Hash
-	TxIndex         uint
-	Creator         common.Address
-	Timestamp       uint64
+	ContractAddress  common.Address
+	BlockNumber      uint64
+	BlockHash        common.Hash
+	TxHash           common.Hash
+	TxIndex          uint
+	Creator          common.Address
+	Timestamp        uint64
 	HasTransferEvent bool
+}
+
+// NewPairCreatedEvent is posted when a new trading pair is created (PancakeSwap)
+type NewPairCreatedEvent struct {
+	PairAddress    common.Address
+	Token0         common.Address
+	Token1         common.Address
+	PairIndex      *big.Int
+	FactoryAddress common.Address
+	BlockNumber    uint64
+	BlockHash      common.Hash
+	TxHash         common.Hash
+	TxIndex        uint
+	Creator        common.Address
+	Timestamp      uint64
 }
