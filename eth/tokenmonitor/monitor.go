@@ -6,6 +6,7 @@ package tokenmonitor
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"runtime"
 	"sync"
 	"time"
@@ -47,10 +48,12 @@ type TokenMonitor struct {
 	// Statistics
 	stats struct {
 		sync.RWMutex
-		detected  uint64
-		verified  uint64
-		published uint64
-		failed    uint64
+		detected     uint64
+		verified     uint64
+		published    uint64
+		failed       uint64
+		lastErrors   []string  // Keep last 5 error messages
+		lastFailedAt time.Time // Last failure timestamp
 	}
 }
 
@@ -176,13 +179,24 @@ func (m *TokenMonitor) verifyWorker(id int) {
 			// Verify and extract metadata
 			metadata, err := m.verifier.VerifyAndExtract(token)
 			if err != nil {
-				log.Debug("Token verification failed",
-					"worker", id,
-					"address", token.Address.Hex(),
-					"err", err)
+				// Record error for debugging (keep last 5 errors)
+				errMsg := fmt.Sprintf("block=%d addr=%s err=%v", token.BlockNumber, token.Address.Hex(), err)
+
 				m.stats.Lock()
 				m.stats.failed++
+				m.stats.lastFailedAt = time.Now()
+
+				// Keep only last 5 errors
+				m.stats.lastErrors = append(m.stats.lastErrors, errMsg)
+				if len(m.stats.lastErrors) > 5 {
+					m.stats.lastErrors = m.stats.lastErrors[1:]
+				}
 				m.stats.Unlock()
+
+				// Only log every 100th failure to reduce noise
+				if m.stats.failed % 100 == 0 {
+					log.Debug("Token verification failed (sample)", "worker", id, "total_failed", m.stats.failed, "err", err)
+				}
 				continue
 			}
 
@@ -302,6 +316,14 @@ func (m *TokenMonitor) statsReporter() {
 				"failed", m.stats.failed,
 				"verify_queue", len(m.verifyQueue),
 				"publish_queue", len(m.publishQueue))
+
+			// Log last few errors if there are failures
+			if m.stats.failed > 0 && len(m.stats.lastErrors) > 0 {
+				log.Info("Recent verification failures (last 5):")
+				for i, errMsg := range m.stats.lastErrors {
+					log.Info(fmt.Sprintf("  [%d] %s", i+1, errMsg))
+				}
+			}
 			m.stats.RUnlock()
 
 		case <-m.ctx.Done():

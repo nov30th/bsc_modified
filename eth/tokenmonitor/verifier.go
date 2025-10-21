@@ -33,10 +33,17 @@ func NewVerifier(blockchain *core.BlockChain) *Verifier {
 
 // VerifyAndExtract verifies a contract is a BEP-20 token and extracts metadata
 func (v *Verifier) VerifyAndExtract(token *PendingToken) (*TokenMetadata, error) {
-	// Get current state
+	// Get current state (only works for recent blocks)
+	// For syncing nodes, we skip historical tokens and only process new ones
 	statedb, err := v.blockchain.State()
 	if err != nil {
 		return nil, fmt.Errorf("failed to get state: %w", err)
+	}
+
+	// Check if contract still exists at current state
+	// This filters out historical tokens during sync
+	if !statedb.Exist(token.Address) {
+		return nil, fmt.Errorf("contract does not exist in current state (likely historical during sync)")
 	}
 
 	// 1. Verify core functions
