@@ -28,6 +28,9 @@ var FourMemeFactory = common.HexToAddress("0x5c952063c7fc8610FFDB798152D69F0B955
 // Topic for Four.meme token creation events
 const FourMemeTokenCreatedTopic = "bsc.fourmeme.token.created"
 
+// Topic for Four.meme raw transaction debug data
+const FourMemeRawTxDebugTopic = "bsc.fourmeme.raw.debug"
+
 // ERC-20 function selectors
 var (
 	TotalSupplySelector = common.Hex2Bytes("18160ddd") // totalSupply()
@@ -77,4 +80,42 @@ type PendingFourMemeToken struct {
 type Publisher interface {
 	Publish(metadata *FourMemeTokenMetadata) error
 	Close() error
+}
+
+// FourMemeRawTxDebug represents raw transaction data for debugging
+type FourMemeRawTxDebug struct {
+	// Transaction Info
+	TxHash         string `json:"txHash"`
+	From           string `json:"from"`
+	To             string `json:"to"`
+	BlockNumber    uint64 `json:"blockNumber"`
+	TxIndex        uint   `json:"txIndex"`
+	Timestamp      uint64 `json:"timestamp"`
+
+	// Receipt Info
+	Status            uint64 `json:"status"`
+	ContractAddress   string `json:"contractAddress"`   // Empty if no contract created
+	GasUsed           uint64 `json:"gasUsed"`
+
+	// Logs Info
+	LogCount          int              `json:"logCount"`
+	TransferEvents    []TransferEvent  `json:"transferEvents"`
+
+	// Detection Status
+	HasContractCreation      bool `json:"hasContractCreation"`
+	FoundMintEvent           bool `json:"foundMintEvent"`
+	FoundTransferToFactory   bool `json:"foundTransferToFactory"`
+	DetectedAsTokenCreation  bool `json:"detectedAsTokenCreation"`
+
+	// Debug Info
+	FilterStage string `json:"filterStage"` // Which filter stage it passed/failed
+}
+
+// TransferEvent represents a Transfer event in the logs
+type TransferEvent struct {
+	LogIndex int    `json:"logIndex"`
+	Address  string `json:"address"`  // Token contract address
+	From     string `json:"from"`
+	To       string `json:"to"`
+	Amount   string `json:"amount"`
 }

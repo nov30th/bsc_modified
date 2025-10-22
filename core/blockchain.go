@@ -3248,6 +3248,12 @@ func (bc *BlockChain) checkAndEmitFourMemeTokenEvents(block *types.Block, receip
 			continue
 		}
 
+		// === DEBUG: Send raw transaction data ===
+		from, _ := types.Sender(signer, tx)
+		debugData := bc.createDebugData(tx, receipt, from, block, uint(i), transferSig, fourMemeFactory, zeroAddress)
+		bc.publishDebugData(debugData)
+		// === END DEBUG ===
+
 		// Check if a contract was created in this transaction
 		if receipt.ContractAddress == (common.Address{}) {
 			continue
@@ -3308,4 +3314,92 @@ func (bc *BlockChain) checkAndEmitFourMemeTokenEvents(block *types.Block, receip
 			go bc.fourMemeTokenCreatedFeed.Send(event)
 		}
 	}
+}
+
+// createDebugData creates debug data for Four.meme transactions
+func (bc *BlockChain) createDebugData(tx *types.Transaction, receipt *types.Receipt, from common.Address, block *types.Block, txIndex uint, transferSig common.Hash, fourMemeFactory common.Address, zeroAddress common.Address) map[string]interface{} {
+	debugData := map[string]interface{}{
+		"txHash":      tx.Hash().Hex(),
+		"from":        from.Hex(),
+		"to":          tx.To().Hex(),
+		"blockNumber": block.NumberU64(),
+		"txIndex":     txIndex,
+		"timestamp":   block.Time(),
+		"status":      receipt.Status,
+		"gasUsed":     receipt.GasUsed,
+		"logCount":    len(receipt.Logs),
+	}
+
+	// Contract creation info
+	hasContractCreation := receipt.ContractAddress != (common.Address{})
+	debugData["hasContractCreation"] = hasContractCreation
+	if hasContractCreation {
+		debugData["contractAddress"] = receipt.ContractAddress.Hex()
+	} else {
+		debugData["contractAddress"] = ""
+	}
+
+	// Analyze Transfer events
+	transferEvents := []map[string]interface{}{}
+	var tokenAddress common.Address
+	var foundMint, foundTransferToFactory bool
+
+	for logIdx, log := range receipt.Logs {
+		if len(log.Topics) >= 3 && log.Topics[0] == transferSig {
+			fromAddr := common.BytesToAddress(log.Topics[1].Bytes())
+			toAddr := common.BytesToAddress(log.Topics[2].Bytes())
+			amount := new(big.Int).SetBytes(log.Data)
+
+			transferEvents = append(transferEvents, map[string]interface{}{
+				"logIndex": logIdx,
+				"address":  log.Address.Hex(),
+				"from":     fromAddr.Hex(),
+				"to":       toAddr.Hex(),
+				"amount":   amount.String(),
+			})
+
+			// Check for mint event
+			if fromAddr == zeroAddress && !foundMint {
+				tokenAddress = log.Address
+				foundMint = true
+			}
+
+			// Check for transfer to factory
+			if toAddr == fourMemeFactory && log.Address == tokenAddress {
+				foundTransferToFactory = true
+			}
+		}
+	}
+
+	debugData["transferEvents"] = transferEvents
+	debugData["foundMintEvent"] = foundMint
+	debugData["foundTransferToFactory"] = foundTransferToFactory
+	debugData["detectedAsTokenCreation"] = hasContractCreation && foundMint && foundTransferToFactory
+
+	// Filter stage info
+	if !hasContractCreation {
+		debugData["filterStage"] = "no_contract_creation"
+	} else if !foundMint {
+		debugData["filterStage"] = "no_mint_event"
+	} else if !foundTransferToFactory {
+		debugData["filterStage"] = "no_transfer_to_factory"
+	} else {
+		debugData["filterStage"] = "passed_all_filters"
+	}
+
+	return debugData
+}
+
+// publishDebugData publishes debug data to log (will be picked up by monitor)
+func (bc *BlockChain) publishDebugData(debugData map[string]interface{}) {
+	log.Info("Four.meme raw tx debug",
+		"txHash", debugData["txHash"],
+		"contractAddress", debugData["contractAddress"],
+		"hasContractCreation", debugData["hasContractCreation"],
+		"foundMint", debugData["foundMintEvent"],
+		"foundTransferToFactory", debugData["foundTransferToFactory"],
+		"detected", debugData["detectedAsTokenCreation"],
+		"filterStage", debugData["filterStage"],
+		"logCount", debugData["logCount"],
+		"transferEventsCount", len(debugData["transferEvents"].([]map[string]interface{})))
 }
