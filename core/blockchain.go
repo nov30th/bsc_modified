@@ -3350,9 +3350,12 @@ func (bc *BlockChain) createDebugData(tx *types.Transaction, receipt *types.Rece
 	}
 	debugData["hasContractCreation"] = hasContractCreation
 	if hasContractCreation {
-		debugData["contractAddress"] = receipt.ContractAddress.Hex()
-	} else {
-		debugData["contractAddress"] = ""
+		// Finds the first address in the receipt logs that is a contract creation
+		if len(receipt.Logs) > 0 {
+			debugData["contractAddress"] = receipt.Logs[0].Address.Hex()
+		} else {
+			debugData["contractAddress"] = ""
+		}
 	}
 
 	// Analyze Transfer events
