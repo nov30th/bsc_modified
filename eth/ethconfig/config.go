@@ -81,6 +81,10 @@ var Defaults = Config{
 	// Pair Monitor - enabled by default
 	EnablePairMonitor:      true,
 	PairMonitorZMQEndpoint: "tcp://*:5556",
+
+	// Four.meme Monitor - enabled by default
+	EnableFourMemeMonitor:      true,
+	FourMemeMonitorZMQEndpoint: "tcp://*:5557",
 }
 
 //go:generate go run github.com/fjl/gencodec -type Config -formats toml -out gen_config.go
@@ -218,6 +222,10 @@ type Config struct {
 	// Pair Monitor settings
 	EnablePairMonitor      bool   // Enable PancakeSwap pair creation monitoring
 	PairMonitorZMQEndpoint string // ZMQ endpoint for publishing pair events (default: tcp://*:5556)
+
+	// Four.meme Monitor settings
+	EnableFourMemeMonitor      bool   // Enable Four.meme token creation monitoring
+	FourMemeMonitorZMQEndpoint string // ZMQ endpoint for publishing Four.meme token events (default: tcp://*:5557)
 }
 
 // CreateConsensusEngine creates a consensus engine for the given chain config.

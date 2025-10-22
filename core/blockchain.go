@@ -285,8 +285,9 @@ type BlockChain struct {
 	blockProcFeed            event.Feed
 	finalizedHeaderFeed      event.Feed
 	highestVerifiedBlockFeed event.Feed
-	tokenCreatedFeed         event.Feed // Feed for new token creation events
-	pairCreatedFeed          event.Feed // Feed for new pair creation events
+	tokenCreatedFeed         event.Feed         // Feed for new token creation events
+	pairCreatedFeed          event.Feed         // Feed for new pair creation events
+	fourMemeTokenCreatedFeed event.Feed         // Feed for Four.meme token creation events
 	scope                    event.SubscriptionScope
 	genesisBlock             *types.Block
 
@@ -1735,6 +1736,9 @@ func (bc *BlockChain) writeBlockWithState(block *types.Block, receipts []*types.
 
 	// Check for new PancakeSwap pairs and send events
 	bc.checkAndEmitPairEvents(block, receipts)
+
+	// Check for new Four.meme tokens and send events
+	bc.checkAndEmitFourMemeTokenEvents(block, receipts)
 
 	// Irrelevant of the canonical status, write the block itself to the database.
 	//
@@ -3219,6 +3223,89 @@ func (bc *BlockChain) checkAndEmitPairEvents(block *types.Block, receipts []*typ
 
 			// Send event asynchronously to avoid blocking
 			go bc.pairCreatedFeed.Send(event)
+		}
+	}
+}
+
+// checkAndEmitFourMemeTokenEvents checks for Four.meme token creation events and emits them
+func (bc *BlockChain) checkAndEmitFourMemeTokenEvents(block *types.Block, receipts []*types.Receipt) {
+	// Four.meme Factory address
+	fourMemeFactory := common.HexToAddress("0x5c952063c7fc8610FFDB798152D69F0B9550762b")
+
+	// Transfer event signature: keccak256("Transfer(address,address,uint256)")
+	transferSig := common.HexToHash("0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef")
+
+	// Zero address for detecting minting
+	zeroAddress := common.Address{}
+
+	signer := types.MakeSigner(bc.chainConfig, block.Number(), block.Time())
+
+	for i, receipt := range receipts {
+		tx := block.Transactions()[i]
+
+		// Check if transaction is to Four.meme Factory
+		if tx.To() == nil || *tx.To() != fourMemeFactory {
+			continue
+		}
+
+		// Check if a contract was created in this transaction
+		if receipt.ContractAddress == (common.Address{}) {
+			continue
+		}
+
+		// Look for two Transfer events:
+		// 1. From zero address (minting)
+		// 2. To Four.meme Factory (transferring all tokens to factory)
+		var tokenAddress common.Address
+		var initialSupply *big.Int
+		foundMint := false
+		foundTransferToFactory := false
+
+		for _, log := range receipt.Logs {
+			// Check if this is a Transfer event
+			if len(log.Topics) < 3 || log.Topics[0] != transferSig {
+				continue
+			}
+
+			// Extract Transfer parameters
+			from := common.BytesToAddress(log.Topics[1].Bytes())
+			to := common.BytesToAddress(log.Topics[2].Bytes())
+			amount := new(big.Int).SetBytes(log.Data)
+
+			// Check for minting event (from zero address)
+			if from == zeroAddress && !foundMint {
+				tokenAddress = log.Address
+				initialSupply = amount
+				foundMint = true
+			}
+
+			// Check for transfer to factory
+			if to == fourMemeFactory && log.Address == tokenAddress {
+				foundTransferToFactory = true
+			}
+		}
+
+		// If we found both events, this is a Four.meme token creation
+		if foundMint && foundTransferToFactory {
+			from, err := types.Sender(signer, tx)
+			if err != nil {
+				continue
+			}
+
+			event := NewFourMemeTokenCreatedEvent{
+				TokenAddress:   tokenAddress,
+				Creator:        from,
+				InitialSupply:  initialSupply,
+				BlockNumber:    block.NumberU64(),
+				BlockHash:      block.Hash(),
+				TxHash:         tx.Hash(),
+				TxIndex:        uint(i),
+				Timestamp:      block.Time(),
+				FactoryAddress: fourMemeFactory,
+			}
+
+			// Send event asynchronously to avoid blocking
+			go bc.fourMemeTokenCreatedFeed.Send(event)
 		}
 	}
 }

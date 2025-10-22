@@ -172,6 +172,8 @@ var (
 		utils.TokenMonitorZMQEndpointFlag,
 		utils.EnablePairMonitorFlag,
 		utils.PairMonitorZMQEndpointFlag,
+		utils.EnableFourMemeMonitorFlag,
+		utils.FourMemeMonitorZMQEndpointFlag,
 		utils.NetworkIdFlag,
 		utils.EthStatsURLFlag,
 		utils.NoCompactionFlag,

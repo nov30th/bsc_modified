@@ -705,6 +705,17 @@ var (
 		Value:    "tcp://*:5556",
 		Category: flags.MiscCategory,
 	}
+	EnableFourMemeMonitorFlag = &cli.BoolFlag{
+		Name:     "monitor.fourmeme",
+		Usage:    "Enable Four.meme token creation monitoring and publishing via ZMQ",
+		Category: flags.MiscCategory,
+	}
+	FourMemeMonitorZMQEndpointFlag = &cli.StringFlag{
+		Name:     "monitor.fourmeme.zmq",
+		Usage:    "ZMQ endpoint for publishing Four.meme token events",
+		Value:    "tcp://*:5557",
+		Category: flags.MiscCategory,
+	}
 
 	// API options.
 	RPCGlobalGasCapFlag = &cli.Uint64Flag{
@@ -2357,6 +2368,14 @@ func SetEthConfig(ctx *cli.Context, stack *node.Node, cfg *ethconfig.Config) {
 	}
 	if ctx.IsSet(PairMonitorZMQEndpointFlag.Name) {
 		cfg.PairMonitorZMQEndpoint = ctx.String(PairMonitorZMQEndpointFlag.Name)
+	}
+
+	// Four.meme Monitor config
+	if ctx.IsSet(EnableFourMemeMonitorFlag.Name) {
+		cfg.EnableFourMemeMonitor = ctx.Bool(EnableFourMemeMonitorFlag.Name)
+	}
+	if ctx.IsSet(FourMemeMonitorZMQEndpointFlag.Name) {
+		cfg.FourMemeMonitorZMQEndpoint = ctx.String(FourMemeMonitorZMQEndpointFlag.Name)
 	}
 }
 

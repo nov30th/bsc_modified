@@ -80,3 +80,16 @@ type NewPairCreatedEvent struct {
 	Creator        common.Address
 	Timestamp      uint64
 }
+
+// NewFourMemeTokenCreatedEvent is posted when a new token is created on Four.meme platform
+type NewFourMemeTokenCreatedEvent struct {
+	TokenAddress   common.Address // The newly created token contract address
+	Creator        common.Address // The user who created the token (tx.from)
+	InitialSupply  *big.Int       // Initial token supply (usually 1,000,000,000)
+	BlockNumber    uint64
+	BlockHash      common.Hash
+	TxHash         common.Hash
+	TxIndex        uint
+	Timestamp      uint64
+	FactoryAddress common.Address // Four.meme Factory address
+}

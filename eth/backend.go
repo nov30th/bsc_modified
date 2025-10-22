@@ -48,6 +48,7 @@ import (
 	"github.com/ethereum/go-ethereum/core/vote"
 	"github.com/ethereum/go-ethereum/eth/downloader"
 	"github.com/ethereum/go-ethereum/eth/ethconfig"
+	"github.com/ethereum/go-ethereum/eth/fourmememonitor"
 	"github.com/ethereum/go-ethereum/eth/pairmonitor"
 	"github.com/ethereum/go-ethereum/eth/tokenmonitor"
 	"github.com/ethereum/go-ethereum/eth/filters"
@@ -132,8 +133,9 @@ type Ethereum struct {
 
 	p2pServer *p2p.Server
 
-	tokenMonitor *tokenmonitor.TokenMonitor // Token creation monitor
-	pairMonitor  *pairmonitor.PairMonitor   // Pair creation monitor
+	tokenMonitor     *tokenmonitor.TokenMonitor         // Token creation monitor
+	pairMonitor      *pairmonitor.PairMonitor           // Pair creation monitor
+	fourMemeMonitor  *fourmememonitor.FourMemeMonitor   // Four.meme token monitor
 
 	lock sync.RWMutex // Protects the variadic fields (e.g. gas price and etherbase)
 
@@ -809,6 +811,19 @@ func (s *Ethereum) Start() error {
 		log.Info("Pair monitor is disabled")
 	}
 
+	// Start Four.meme monitor if enabled
+	log.Info("Four.meme monitor configuration", "enabled", s.config.EnableFourMemeMonitor, "endpoint", s.config.FourMemeMonitorZMQEndpoint)
+	if s.config.EnableFourMemeMonitor {
+		log.Info("Starting Four.meme monitor...")
+		if err := s.startFourMemeMonitor(); err != nil {
+			log.Error("Failed to start Four.meme monitor", "err", err)
+		} else {
+			log.Info("Four.meme monitor initialization completed")
+		}
+	} else {
+		log.Info("Four.meme monitor is disabled")
+	}
+
 	go s.reportRecentBlocksLoop()
 	return nil
 }
@@ -872,6 +887,11 @@ func (s *Ethereum) Stop() error {
 	// Stop pair monitor if running
 	if s.pairMonitor != nil {
 		s.pairMonitor.Stop()
+	}
+
+	// Stop Four.meme monitor if running
+	if s.fourMemeMonitor != nil {
+		s.fourMemeMonitor.Stop()
 	}
 
 	// Then stop everything else.
@@ -1024,5 +1044,35 @@ func (s *Ethereum) startPairMonitor() error {
 	}
 
 	log.Info("Pair monitor started successfully", "endpoint", endpoint)
+	return nil
+}
+
+// startFourMemeMonitor initializes and starts the Four.meme token monitor
+func (s *Ethereum) startFourMemeMonitor() error {
+	// Default ZMQ endpoint (different port from token and pair monitors)
+	endpoint := "tcp://*:5557"
+	if s.config.FourMemeMonitorZMQEndpoint != "" {
+		endpoint = s.config.FourMemeMonitorZMQEndpoint
+	}
+
+	// Reuse ZMQ publisher from tokenmonitor package
+	zmqPublisher, err := tokenmonitor.NewZMQPublisher(endpoint)
+	if err != nil {
+		return fmt.Errorf("failed to create ZMQ publisher for Four.meme: %w", err)
+	}
+
+	// Create adapter for Four.meme publisher interface
+	publisher := fourmememonitor.NewZMQPublisherAdapter(zmqPublisher)
+
+	// Create Four.meme monitor
+	s.fourMemeMonitor = fourmememonitor.NewFourMemeMonitor(s.blockchain, publisher)
+
+	// Start monitoring
+	if err := s.fourMemeMonitor.Start(); err != nil {
+		publisher.Close()
+		return fmt.Errorf("failed to start Four.meme monitor: %w", err)
+	}
+
+	log.Info("Four.meme monitor started successfully", "endpoint", endpoint)
 	return nil
 }

@@ -542,6 +542,11 @@ func (bc *BlockChain) SubscribePairCreatedEvent(ch chan<- NewPairCreatedEvent) e
 	return bc.scope.Track(bc.pairCreatedFeed.Subscribe(ch))
 }
 
+// SubscribeFourMemeTokenCreatedEvent registers a subscription of NewFourMemeTokenCreatedEvent.
+func (bc *BlockChain) SubscribeFourMemeTokenCreatedEvent(ch chan<- NewFourMemeTokenCreatedEvent) event.Subscription {
+	return bc.scope.Track(bc.fourMemeTokenCreatedFeed.Subscribe(ch))
+}
+
 // AncientTail retrieves the tail the ancients blocks
 func (bc *BlockChain) AncientTail() (uint64, error) {
 	tail, err := bc.db.Tail()
