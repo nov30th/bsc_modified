@@ -18,6 +18,7 @@
 package core
 
 import (
+	"bytes"
 	"errors"
 	"fmt"
 	"io"
@@ -285,9 +286,9 @@ type BlockChain struct {
 	blockProcFeed            event.Feed
 	finalizedHeaderFeed      event.Feed
 	highestVerifiedBlockFeed event.Feed
-	tokenCreatedFeed         event.Feed         // Feed for new token creation events
-	pairCreatedFeed          event.Feed         // Feed for new pair creation events
-	fourMemeTokenCreatedFeed event.Feed         // Feed for Four.meme token creation events
+	tokenCreatedFeed         event.Feed // Feed for new token creation events
+	pairCreatedFeed          event.Feed // Feed for new pair creation events
+	fourMemeTokenCreatedFeed event.Feed // Feed for Four.meme token creation events
 	scope                    event.SubscriptionScope
 	genesisBlock             *types.Block
 
@@ -3152,13 +3153,13 @@ func (bc *BlockChain) checkAndEmitTokenEvents(block *types.Block, receipts []*ty
 			}
 
 			event := NewTokenCreatedEvent{
-				ContractAddress: receipt.ContractAddress,
-				BlockNumber:     block.NumberU64(),
-				BlockHash:       block.Hash(),
-				TxHash:          tx.Hash(),
-				TxIndex:         uint(i),
-				Creator:         from,
-				Timestamp:       block.Time(),
+				ContractAddress:  receipt.ContractAddress,
+				BlockNumber:      block.NumberU64(),
+				BlockHash:        block.Hash(),
+				TxHash:           tx.Hash(),
+				TxIndex:          uint(i),
+				Creator:          from,
+				Timestamp:        block.Time(),
 				HasTransferEvent: true,
 			}
 
@@ -3331,7 +3332,13 @@ func (bc *BlockChain) createDebugData(tx *types.Transaction, receipt *types.Rece
 	}
 
 	// Contract creation info
-	hasContractCreation := receipt.ContractAddress != (common.Address{})
+	hasContractCreation := false
+	input := tx.Data()
+	if len(input) > 4 {
+		methodID := input[:4]
+		createTokenID := []byte{0x51, 0x9e, 0xbb, 0x10} // 0x519ebb10
+		hasContractCreation = bytes.Equal(methodID, createTokenID)
+	}
 	debugData["hasContractCreation"] = hasContractCreation
 	if hasContractCreation {
 		debugData["contractAddress"] = receipt.ContractAddress.Hex()
