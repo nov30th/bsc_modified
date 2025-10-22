@@ -3249,6 +3249,15 @@ func (bc *BlockChain) checkAndEmitFourMemeTokenEvents(block *types.Block, receip
 			continue
 		}
 
+		input := tx.Data()
+		if len(input) > 4 {
+			methodID := input[:4]
+			createTokenID := []byte{0x51, 0x9e, 0xbb, 0x10} // 0x519ebb10
+			if !bytes.Equal(methodID, createTokenID) {
+				continue
+			}
+		}
+
 		// === DEBUG: Send raw transaction data ===
 		from, _ := types.Sender(signer, tx)
 		debugData := bc.createDebugData(tx, receipt, from, block, uint(i), transferSig, fourMemeFactory, zeroAddress)
